@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "codex-account-manager": {
+      "command": "node",
+      "args": ["./scripts/account-manager.cjs"],
+      "cwd": "."
+    }
+  }
+}

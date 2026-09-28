@@ -1,0 +1,24 @@
+{
+  "name": "codex-account-manager",
+  "version": "1.0.0+codex.20260910170700",
+  "description": "Save ChatGPT accounts, check usage and reset credits, and switch with session preservation.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Codex Account Manager",
+    "shortDescription": "Your accounts, usage, resets, and safer switching.",
+    "longDescription": "A local account dashboard with normal ChatGPT sign-in, per-account usage and reset-credit checks, refreshed-session preservation, and validated switching that gracefully reopens the desktop app.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [
+      "Account dashboard",
+      "Usage and reset credits",
+      "Session preservation",
+      "Account switching"
+    ],
+    "defaultPrompt": "Open Account Manager and show my accounts, remaining usage, and reset credits."
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-10",
+  "source": "https://developers.openai.com/api/docs/pricing",
+  "basis": "Current Standard API rates in USD per million tokens; excludes tools, Fast mode and regional surcharges. This is an API-equivalent estimate, not a subscription bill.",
+  "models": {
+    "gpt-6-astra": {"short": [10, 1, 12.5, 50], "long": [20, 2, 25, 75], "threshold": 272000},
+    "gpt-5.6-sol": {"short": [4, 0.4, 5, 20], "long": [8, 0.8, 10, 30], "threshold": 272000},
+    "gpt-5.6-terra": {"short": [2, 0.2, 2.5, 12], "long": [4, 0.4, 5, 18], "threshold": 272000},
+    "gpt-5.6-luna": {"short": [0.2, 0.02, 0.25, 1.2], "long": [0.4, 0.04, 0.5, 1.8], "threshold": 272000},
+    "gpt-5.5": {"short": [5, 0.5, null, 30], "long": [10, 1, null, 45], "threshold": 272000},
+    "gpt-5.4": {"short": [2.5, 0.25, null, 15], "long": [5, 0.5, null, 22.5], "threshold": 272000},
+    "gpt-5.4-mini": {"short": [0.75, 0.075, null, 4.5]},
+    "gpt-5.4-nano": {"short": [0.2, 0.02, null, 1.25]},
+    "gpt-5.3-codex": {"short": [1.75, 0.175, null, 14]},
+    "gpt-5.2": {"short": [1.75, 0.175, null, 14]},
+    "gpt-5.1": {"short": [1.25, 0.125, null, 10]},
+    "gpt-5": {"short": [1.25, 0.125, null, 10]}
+  }
+}
