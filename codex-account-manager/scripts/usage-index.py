@@ -12,10 +12,13 @@ import hashlib
 import json
 import os
 import sqlite3
-import subprocess
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from zstdlines import decompressed  # noqa: E402  (shared with live-sessions.py)
+from cachedb import recovering  # noqa: E402
 
 PRICING = json.loads(Path(__file__).with_name('session-pricing.json').read_text())
 HORIZON = 92 * 86400
@@ -196,28 +199,6 @@ def claude_line(db, line, state, cutoff):
     store(db, 'claude-code', state.get('account'), key, at, event.get('sessionId') or state['session'], project, model, speed, r, replace=True)
 
 
-ZSTD = ("const z=require('zlib'),fs=require('fs');if(typeof z.createZstdDecompress!=='function')process.exit(3);"
-        "fs.createReadStream(process.argv[1]).on('error',()=>process.exit(2)).pipe(z.createZstdDecompress())"
-        ".on('error',()=>process.exit(2)).pipe(process.stdout);")
-
-
-def decompressed(path, handle):
-    """Stream a .zst rollout through Node's built-in zstd (Node 22.15+). Returns bytes read."""
-    node = os.environ.get('CODEX_ACCOUNT_NODE') or 'node'
-    proc = subprocess.Popen([node, '-e', ZSTD, path], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    total = 0
-    try:
-        for line in proc.stdout:
-            total += len(line)
-            if line.endswith(b'\n'): handle(line)
-    finally:
-        proc.stdout.close()
-        code = proc.wait()
-    if code == 3: raise LookupError('This Node.js has no built-in zstd')
-    if code != 0: raise RuntimeError('zstd read failed')
-    return total
-
-
 def claude_account(home):
     return 'claude:' + (home.name or 'default')
 
@@ -393,18 +374,23 @@ def main():
     root = Path(data['root']) / 'usage-index'
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     now = data.get('now') or time.time()
+    path = str(root / 'usage.sqlite')
+
+    def run(work):
+        def go():
+            db = connect(root)
+            try: return work(db)
+            finally: db.close()
+        # Derived from local logs: a corrupt index is moved aside and rebuilt, not left failing.
+        return recovering(path, go)
+
     if data.get('cmd') == 'query':
-        db = connect(root)
-        print(json.dumps(query(db, data.get('ledger'), data.get('params') or {}, now)))
-        db.close(); return
+        print(json.dumps(run(lambda db: query(db, data.get('ledger'), data.get('params') or {}, now)))); return
     # Serialize index passes, including separate processes.
     with open(root / 'index.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        db = connect(root)
         homes = data.get('claudeHomes') or ([data['claudeHome']] if data.get('claudeHome') else [])
-        result = index(db, Path(data['codexHome']), [Path(h) for h in homes], data.get('budget', 256 * 1024 * 1024), now)
-        print(json.dumps(result))
-        db.close()
+        print(json.dumps(run(lambda db: index(db, Path(data['codexHome']), [Path(h) for h in homes], data.get('budget', 256 * 1024 * 1024), now))))
 
 
 if __name__ == '__main__': main()

@@ -7,7 +7,7 @@ function startSessions(manager){
   let snapshot=readJson(path.join(manager.root,'live-sessions.json'),{sessions:[],scannedAt:null,loading:true});
   function tick(){
     if(stopped)return;
-    child=spawn(process.env.CODEX_ACCOUNT_PYTHON||'python3',[path.join(__dirname,'live-sessions.py')],{stdio:['pipe','pipe','pipe']});
+    child=spawn(process.env.CODEX_ACCOUNT_PYTHON||'python3',[path.join(__dirname,'live-sessions.py')],{stdio:['pipe','pipe','pipe'],env:{...process.env,CODEX_ACCOUNT_NODE:process.execPath}});
     let out='',settled=false;
     const timeout=setTimeout(()=>child?.kill('SIGTERM'),60000);timeout.unref();
     function done(error){

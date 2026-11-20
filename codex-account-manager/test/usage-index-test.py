@@ -132,6 +132,17 @@ class UsageIndexTests(unittest.TestCase):
         self.db.close(); self.db = m.connect(self.root)
         self.assertAlmostEqual(self.query()['totals']['cost'], before)
 
+    def test_corrupt_index_is_rebuilt_on_the_next_run(self):
+        codex_rollout(self.codex / 'sessions' / 'a.jsonl'); self.db.close()
+        (self.root / 'usage-index').mkdir()
+        (self.root / 'usage-index' / 'usage.sqlite').write_bytes(b'SQLite format 3\x00' + b'\xff' * 4096)
+        script = str(Path(__file__).parent / '../scripts/usage-index.py')
+        run = lambda cmd: subprocess.run(['python3', script], input=json.dumps(dict(cmd=cmd, root=str(self.root), codexHome=str(self.codex), claudeHomes=[], now=NOW)), capture_output=True, text=True)
+        p = run('index'); self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertTrue((self.root / 'usage-index' / 'usage.sqlite.corrupt').exists())
+        self.assertEqual(json.loads(run('query').stdout)['totals']['requests'], 1)
+        self.db = m.connect(self.root / 'usage-index')
+
     @unittest.skipUnless(shutil.which('node') and subprocess.run(['node', '-e', "process.exit(typeof require('zlib').zstdCompressSync==='function'?0:1)"]).returncode == 0, 'Node.js without zstd')
     def test_compressed_codex_rollouts_are_read_once(self):
         plain = self.base / 'plain.jsonl'; codex_rollout(plain)

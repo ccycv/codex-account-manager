@@ -9,6 +9,10 @@ import sqlite3
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).parent))
+from zstdlines import decompressed  # noqa: E402  (Codex compresses finished rollouts)
+from cachedb import recovering  # noqa: E402
+
 PRICING = json.loads(Path(__file__).with_name('session-pricing.json').read_text())
 FIELDS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens')
 
@@ -99,7 +103,10 @@ def candidates(home, now):
         try:
             db=sqlite3.connect(file.as_uri()+'?mode=ro',uri=True,timeout=2);db.row_factory=sqlite3.Row
             for row in db.execute('SELECT id,rollout_path,title,cwd,model,reasoning_effort,updated_at FROM threads WHERE model_provider=? AND updated_at>=? ORDER BY updated_at DESC LIMIT 100',('openai',now-7*86400)):
-                r=dict(row);result[r['rollout_path']]=r
+                r=dict(row);path=r['rollout_path'] or ''
+                # Codex compresses finished rollouts in place; follow the index to the .zst file.
+                if path and not os.path.exists(path) and os.path.exists(path+'.zst'):path+='.zst'
+                result[path]=r
             db.close();break
         except sqlite3.Error: continue
     # Include CLI sessions and files that have not reached the app index yet.
@@ -107,11 +114,11 @@ def candidates(home, now):
         for root,dirs,names in os.walk(home/folder):
             dirs[:]=[d for d in dirs if not os.path.islink(os.path.join(root,d))]
             for name in names:
-                if not name.endswith('.jsonl'): continue
+                if not (name.endswith('.jsonl') or name.endswith('.jsonl.zst')): continue
                 path=Path(root)/name
                 try:
                     if path.is_symlink() or path.stat().st_mtime<now-7*86400: continue
-                    if str(path) not in result: result[str(path)]={'id':name[-42:-6],'title':'Untitled session','cwd':'','model':None,'reasoning_effort':None}
+                    if str(path) not in result: result[str(path)]={'id':name.removesuffix('.zst')[-42:-6],'title':'Untitled session','cwd':'','model':None,'reasoning_effort':None}
                 except OSError: continue
     safe=[]
     for path,r in result.items():
@@ -124,9 +131,20 @@ def candidates(home, now):
         except OSError: continue
     return sorted(safe,key=lambda r:r[0],reverse=True)[:100]
 
+def scan_compressed(db,path,info,stat,identity,row,budget):
+    # Compressed rollouts are final: read once, whole, then reuse the stored result.
+    if row and row[0]==identity and row[1]==stat.st_size:return json.loads(row[3]),0,0
+    if budget<=0:return initial(info['id']),stat.st_size,0
+    state=initial(info['id'])
+    try:spent=decompressed(str(path),lambda line:consume(line,state,db))
+    except (LookupError,RuntimeError):return state,stat.st_size,0
+    db.execute('INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?)',(str(path),identity,stat.st_size,json.dumps(state),json.dumps(state),stat.st_size,stat.st_mtime))
+    return state,0,spent
+
 def scan_file(db,path,info,budget):
     stat=path.stat();identity=f'{stat.st_dev}:{stat.st_ino}'
     row=db.execute('SELECT identity,offset,state,live,size,mtime FROM files WHERE path=?',(str(path),)).fetchone()
+    if path.name.endswith('.zst'):return scan_compressed(db,path,info,stat,identity,row,budget)
     if row and row[0]==identity and row[1]<=stat.st_size:
         offset=row[1];state=json.loads(row[2]);live=json.loads(row[3])
     else:
@@ -185,7 +203,8 @@ def snapshot(db,home,root,now,budget=64*1024*1024):
             if status=='active' and now-live['at']>120:status='stale'
             account=None
             if ledger and live.get('turnAt'):
-                match=ledger.execute('SELECT account FROM intervals WHERE start<=? AND end>=? ORDER BY start DESC LIMIT 1',(live['turnAt'],live['turnAt'])).fetchone()
+                try:match=ledger.execute('SELECT account FROM intervals WHERE start<=? AND end>=? ORDER BY start DESC LIMIT 1',(live['turnAt'],live['turnAt'])).fetchone()
+                except sqlite3.Error:match=None  # an unreadable ledger only loses attribution
                 account=match[0] if match else None
             rows.append(dict(id=live['session'],title=info.get('title') or 'Untitled session',project=Path(info.get('cwd') or '').name,model=live.get('model') or info.get('model'),reasoning=live.get('effort') or info.get('reasoning_effort'),status=status,updatedAt=live['at'] or path.stat().st_mtime,accountId=account,pendingBytes=left,usage=metrics(db,live['session']),turnUsage=metrics(db,live['session'],live['turn']) if live['turn'] else None))
         except OSError:continue
@@ -197,6 +216,11 @@ def snapshot(db,home,root,now,budget=64*1024*1024):
     return dict(sessions=sorted(unique.values(),key=lambda r:(r['status']=='active',r['updatedAt']),reverse=True),scannedAt=now,pendingBytes=pending,pricing={k:PRICING[k] for k in ('checkedAt','source','basis')},scope='Up to 100 local sessions updated in the last 7 days. Usage totals cover each session’s imported history.',statusNote='Active means an open turn with a log signal within 2 minutes. Longer silent turns are shown as No recent signal. Counters update after a model request completes.')
 
 def main():
-    os.umask(0o077);data=json.load(sys.stdin);root=Path(data['root']);home=Path(data['codexHome']);db=connect(root/'live-sessions')
-    print(json.dumps(snapshot(db,home,root,time.time())));db.close()
+    os.umask(0o077);data=json.load(sys.stdin);root=Path(data['root']);home=Path(data['codexHome'])
+    def run():
+        db=connect(root/'live-sessions')
+        try:return snapshot(db,home,root,time.time())
+        finally:db.close()
+    # This index is derived from local logs: a corrupt file is rebuilt rather than failing every scan.
+    print(json.dumps(recovering(str(root/'live-sessions'/'sessions.sqlite'),run)))
 if __name__=='__main__':main()
