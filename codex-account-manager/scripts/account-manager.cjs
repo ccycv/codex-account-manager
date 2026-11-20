@@ -31,6 +31,18 @@ async function api(action,args) {
   const r=await fetch(u.origin+'/api/'+action,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(args||{})});
   const result=await r.json();if(!r.ok) throw new Error(result.error);return result;
 }
+async function usage(args={}) {
+  const {url}=await dashboard();const u=new URL(url),q=new URLSearchParams();
+  for(const k of ['range','provider','account'])if(typeof args[k]==='string')q.set(k,args[k]);
+  const response=await fetch(u.origin+'/api/usage?'+q,{headers:{Authorization:'Bearer '+u.hash.slice(1)}});
+  const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not read usage.');
+  if(result.loading)return {loading:true,message:'The usage index is starting. Try again in a few seconds.'};
+  // Keep the tool reply compact: summaries and top rows, not every chart bucket.
+  const top=rows=>rows.slice(0,10).map(({key,provider,cost,tokens,requests,unpriced})=>({key,provider,cost,tokens,requests,unpriced}));
+  return {range:result.range,provider:result.provider,account:result.account,start:result.start,end:result.end,totals:result.totals,providers:result.providers,
+    speeds:result.speeds,byModel:top(result.breakdown.model),byAccount:top(result.breakdown.account),byProject:top(result.breakdown.project),
+    unpricedModels:result.unpricedModels,index:result.index,basis:'API-equivalent estimate at Standard list prices (USD); not a subscription bill. Codex logs do not record Fast mode.'};
+}
 async function liveState() {
   const {url}=await dashboard();const u=new URL(url);
   const response=await fetch(u.origin+'/api/state',{headers:{Authorization:'Bearer '+u.hash.slice(1)}});
@@ -41,16 +53,18 @@ const schema=(properties={},required=[])=>({type:'object',properties,required,ad
 const tools=[
   {name:'account_manager_open',description:'Open the local account dashboard to save, connect, compare usage, and switch paid ChatGPT accounts.',inputSchema:schema()},
   {name:'account_manager_list',description:'List accounts, quota/reset credits, account-wide tokens, and a separate durable ledger of usage on this Mac including removed accounts. Includes per-account and total Today/7/30-day/all-recorded counts. Stale, unassigned and incomplete data are marked.',inputSchema:schema()},
+  {name:'account_manager_usage',description:'Cost and token usage on this Mac for Codex and Claude Code: totals, per provider, cost by type and speed, and top models, accounts, and projects. API-equivalent estimates, not bills.',inputSchema:schema({range:{type:'string',enum:['24h','7d','30d','90d']},provider:{type:'string',enum:['all','codex','claude-code']},account:{type:'string',description:'all, unassigned, a local account id such as account:<id>, or claude:<profile directory>'}})},
   {name:'account_manager_refresh',description:'Refresh live quota, token history, and reset-credit availability across saved accounts without switching. Does not redeem credits.',inputSchema:schema({id:{type:'string'}})},
   {name:'account_manager_save_current',description:'Save the current ChatGPT login and preserve its refreshed session.',inputSchema:schema({label:{type:'string'}},['label'])},
   {name:'account_manager_rename',description:'Change a saved account display name without changing its login or usage history.',inputSchema:schema({id:{type:'string'},label:{type:'string'}},['id','label'])},
   {name:'account_manager_remove',description:'Remove a saved account and its saved session, retaining local token history. Leaves the active app login, conversations, and previously created backups unchanged. Use only for an account the user asked to remove.',inputSchema:schema({id:{type:'string'}},['id'])},
-  {name:'account_manager_connect',description:'Start normal ChatGPT sign-in to add or reconnect a saved account, without logging the app out.',inputSchema:schema({label:{type:'string'},id:{type:'string'}},['label'])},
+  {name:'account_manager_connect',description:'Start ChatGPT sign-in in a private browser window to add or reconnect a saved account, without logging the app out.',inputSchema:schema({label:{type:'string'},id:{type:'string'}},['label'])},
   {name:'account_manager_switch',description:'Validate the destination, gracefully close the desktop app, save the outgoing login, switch, and reopen the app. Use only when the user asks to switch now and knows the app will reopen.',inputSchema:schema({id:{type:'string'},reopen:{type:'boolean',const:true}},['id','reopen'])}
 ];
 async function call(name,args={}) {
   if(name==='account_manager_open') return dashboard();
   if(name==='account_manager_list') return liveState();
+  if(name==='account_manager_usage') return usage(args);
   if(name==='account_manager_refresh') return api('refresh',args);
   if(name==='account_manager_save_current') return api('save',args);
   if(name==='account_manager_rename') return api('rename',args);
@@ -65,13 +79,14 @@ async function main() {
     let r;
     if(command==='open') r=await dashboard();
     else if(command==='list') r=new Manager().publicState();
+    else if(command==='usage') r=await usage({range:args[0]||'24h',provider:args[1]||'all'});
     else if(command==='refresh') r=await new Manager().refresh(args[0]);
     else if(command==='save') r=await new Manager().saveCurrent(args.join(' '));
     else if(command==='rename') r=await api('rename',{id:args[0],label:args.slice(1).join(' ')});
     else if(command==='remove') r=await api('remove',{id:args[0]});
     else if(command==='import-legacy') r=await new Manager().importLegacy();
     else if(command==='connect') r=await api('connect',{label:args.join(' ')});
-    else {console.log('Account Manager: open | list | refresh [id] | save <name> | connect <name> | remove <id> | import-legacy');return;}
+    else {console.log('Account Manager: open | list | usage [24h|7d|30d|90d] [all|codex|claude-code] | refresh [id] | save <name> | connect <name> | remove <id> | import-legacy');return;}
     console.log(JSON.stringify(r,null,2));return;
   }
   const lines=readline.createInterface({input:process.stdin});

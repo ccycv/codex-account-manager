@@ -7,12 +7,24 @@ const {Manager,atomic}=require('./manager.cjs');
 const {desktopLifecycle}=require('./desktop.cjs');
 const {startTracker}=require('./local-tracker.cjs');
 const {startSessions}=require('./live-sessions.cjs');
+const {startUsageIndex}=require('./usage-index.cjs');
+const {openPrivate}=require('./private-browser.cjs');
 
-async function serve({manager=new Manager(),port=0,lifecycle=desktopLifecycle,trackLocal=true}={}) {
+async function serve({manager=new Manager(),port=0,lifecycle=desktopLifecycle,trackLocal=true,openPrivateWindow=openPrivate,usageIndex=null}={}) {
   const token=randomBytes(32).toString('hex'); let origin;
   let operation=null;
-  let sessions=null;
+  let sessions=null,usage=usageIndex;
   const web=path.join(__dirname,'../web');
+  // Sign-in must happen in a private window so an existing ChatGPT session is not reused.
+  async function openSignIn() {
+    const login=manager.login;
+    if(!login?.authUrl || !['starting','waiting'].includes(login.status)) return {opened:false,reason:'No sign-in link is available.'};
+    let opened;
+    try {opened=await openPrivateWindow(login.authUrl,{profileDir:path.join(manager.root,'browser-profile')});}
+    catch {opened={opened:false,reason:'The private browser window could not be opened.'};}
+    if(manager.login===login) login.privateWindow=opened;
+    return opened;
+  }
   function json(res,status,data) {res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}
   async function body(req) {
     let bytes=0,chunks=[];
@@ -35,11 +47,15 @@ async function serve({manager=new Manager(),port=0,lifecycle=desktopLifecycle,tr
       if(req.headers.origin && req.headers.origin!==origin) return json(res,403,{error:'Invalid origin.'});
       try {
         if(req.method==='GET' && url.pathname==='/api/sessions') return json(res,200,sessions?.state()||{sessions:[],loading:true});
+        if(req.method==='GET' && url.pathname==='/api/usage') {
+          if(!usage) return json(res,200,{loading:true});
+          return json(res,200,await usage.query(Object.fromEntries(url.searchParams)));
+        }
         if(req.method==='GET' && url.pathname==='/api/state') return json(res,200,{...manager.publicState(),operation});
         if(req.method!=='POST') return json(res,405,{error:'Method not allowed.'});
         if(!String(req.headers['content-type']||'').startsWith('application/json')) return json(res,415,{error:'JSON required.'});
         const input=await body(req);let result;
-        if(manager.login && ['starting','waiting','saving'].includes(manager.login.status) && url.pathname!=='/api/login/cancel')
+        if(manager.login && ['starting','waiting','saving'].includes(manager.login.status) && !['/api/login/cancel','/api/login/open'].includes(url.pathname))
           throw new Error('Finish or cancel the account connection before starting another operation.');
         if(operation?.status==='running' && url.pathname!=='/api/login/cancel') throw new Error('An account operation is already running.');
         if(url.pathname==='/api/refresh') {
@@ -51,8 +67,12 @@ async function serve({manager=new Manager(),port=0,lifecycle=desktopLifecycle,tr
         if(url.pathname==='/api/save') result=await manager.saveCurrent(input.label);
         else if(url.pathname==='/api/rename') result=await manager.renameAccount(input.id,input.label);
         else if(url.pathname==='/api/remove') result=await manager.removeAccount(input.id);
-        else if(url.pathname==='/api/connect') result=await manager.connect(input.label,input.id);
+        else if(url.pathname==='/api/connect') {
+          result=await manager.connect(input.label,input.id);
+          result.privateWindow=await openSignIn();
+        }
         else if(url.pathname==='/api/login/cancel') result=await manager.cancelLogin();
+        else if(url.pathname==='/api/login/open') result=await openSignIn();
         else if(url.pathname==='/api/switch') {
           if(input.reopen!==true) throw new Error('Switching requires reopening the app.');
           const hooks=lifecycle(); operation={type:'switch',status:'running'};
@@ -63,7 +83,7 @@ async function serve({manager=new Manager(),port=0,lifecycle=desktopLifecycle,tr
         return json(res,200,result);
       }catch(e){return json(res,400,{error:e.message});}
     }
-    const files={'/':'index.html','/app.js':'app.js','/usage.js':'usage.js','/privacy.js':'privacy.js','/style.css':'style.css'};
+    const files={'/':'index.html','/app.js':'app.js','/analytics.js':'analytics.js','/usage-page.js':'usage-page.js','/usage.js':'usage.js','/privacy.js':'privacy.js','/style.css':'style.css'};
     if(req.method!=='GET'||!files[url.pathname]) return json(res,404,{error:'Not found.'});
     const ext=path.extname(files[url.pathname]);res.setHeader('Content-Type',ext==='.js'?'text/javascript':ext==='.css'?'text/css':'text/html');
     res.end(fs.readFileSync(path.join(web,files[url.pathname])));
@@ -73,8 +93,8 @@ async function serve({manager=new Manager(),port=0,lifecycle=desktopLifecycle,tr
   origin=`http://127.0.0.1:${server.address().port}`;
   const url=origin+'/#'+token;
   atomic(path.join(manager.root,'dashboard.json'),JSON.stringify({pid:process.pid,url,origin,token}));
-  if(trackLocal){const stop=startTracker(manager);server.once('close',stop);sessions=startSessions(manager);server.once('close',sessions.stop);}
+  if(trackLocal){const stop=startTracker(manager);server.once('close',stop);sessions=startSessions(manager);server.once('close',sessions.stop);usage=startUsageIndex(manager);server.once('close',usage.stop);}
   return {server,url,token,origin,manager};
 }
-if(require.main===module) serve().then(()=>{}).catch(()=>{process.stderr.write('Account dashboard could not start.\n');process.exitCode=1;});
+if(require.main===module) serve({port:Number(process.env.CODEX_ACCOUNT_MANAGER_PORT)||0}).then(()=>{}).catch(()=>{process.stderr.write('Account dashboard could not start.\n');process.exitCode=1;});
 module.exports={serve};

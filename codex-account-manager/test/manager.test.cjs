@@ -143,3 +143,23 @@ test('authenticated HTTP rename updates the targeted saved account',async t=>{
  const {m,active}=fixture(t);active('a-new');const a=await m.saveCurrent('Before');const app=await serve({manager:m,trackLocal:false});t.after(()=>new Promise(r=>{app.server.closeAllConnections();app.server.close(r);}));
  const res=await fetch(app.origin+'/api/rename',{method:'POST',headers:{Authorization:'Bearer '+app.token,'Content-Type':'application/json'},body:JSON.stringify({id:a.id,label:'After'})});assert.equal(res.status,200);assert.equal(m.db().accounts[0].label,'After');
 });
+test('connect opens a private sign-in window and allows reopening it while waiting',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'account-manager-private-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const calls=[];
+ const manager={root,login:null,publicState(){return {accounts:[],login:this.login};},
+  async connect(label){this.login={id:'login-1',label,status:'waiting',authUrl:'https://auth.openai.com/authorize?state=fixture'};return {ok:true,id:'login-1',authUrl:this.login.authUrl};}};
+ const app=await serve({manager,trackLocal:false,openPrivateWindow:async(url,options)=>{calls.push({url,options});return {opened:true,browser:'Google Chrome'};}});
+ t.after(()=>new Promise(r=>{app.server.closeAllConnections();app.server.close(r);}));
+ const headers={Authorization:'Bearer '+app.token,'Content-Type':'application/json'};
+ const res=await fetch(app.origin+'/api/connect',{method:'POST',headers,body:JSON.stringify({label:'Private'})});
+ assert.equal(res.status,200);const body=await res.json();
+ assert.deepEqual(body.privateWindow,{opened:true,browser:'Google Chrome'});
+ assert.equal(calls.length,1);assert.equal(calls[0].url,'https://auth.openai.com/authorize?state=fixture');
+ assert.equal(calls[0].options.profileDir,path.join(root,'browser-profile'));
+ const reopen=await fetch(app.origin+'/api/login/open',{method:'POST',headers,body:'{}'});
+ assert.equal(reopen.status,200);assert.deepEqual(await reopen.json(),{opened:true,browser:'Google Chrome'});assert.equal(calls.length,2);
+ const state=await (await fetch(app.origin+'/api/state',{headers:{Authorization:'Bearer '+app.token}})).json();
+ assert.deepEqual(state.login.privateWindow,{opened:true,browser:'Google Chrome'});
+ const blocked=await fetch(app.origin+'/api/save',{method:'POST',headers,body:JSON.stringify({label:'X'})});
+ assert.equal(blocked.status,400);
+});

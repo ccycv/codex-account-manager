@@ -157,7 +157,7 @@ class Manager {
       stale:a.status!=='ready' || !a.usage || Date.now()-Date.parse(a.usage.checkedAt)>120000})),
       activeId,active:activeId ? db.active : null,switch:db.switch,
       login:this.login ? {id:this.login.id,label:this.login.label,status:this.login.status,
-        authUrl:this.login.authUrl,error:this.login.error}:null};
+        authUrl:this.login.authUrl,privateWindow:this.login.privateWindow||null,error:this.login.error}:null};
   }
   async renameAccount(id,label) {
     label=validateLabel(label);

@@ -33,6 +33,20 @@ class TrackerTests(unittest.TestCase):
   m.observe(self.db,{'accounts':[{'id':'a','label':'A','fingerprint':'a'}],'activeFingerprint':'a'},self.now-100)
   m.observe(self.db,{'accounts':[{'id':'b','label':'B','fingerprint':'b'}],'activeFingerprint':'b'},self.now)
   self.token(100,100);self.assertIsNone(self.db.execute('select account from events').fetchone()[0])
+ def test_slow_scan_cycles_still_form_intervals(self):
+  # Scans of large session histories take minutes; unchanged observations must
+  # keep forming attribution intervals instead of leaving usage unassigned.
+  data={'accounts':[{'id':'a','label':'A','fingerprint':'a'}],'activeFingerprint':'a'}
+  m.observe(self.db,data,self.now-3000)
+  m.observe(self.db,data,self.now)
+  self.token(100,100)
+  self.assertEqual(self.db.execute('select account from events').fetchone()[0],'a')
+ def test_account_change_during_long_gap_is_not_backdated(self):
+  # A switch while the tracker was stopped must not attribute the earlier
+  # window to the newly selected account.
+  m.observe(self.db,{'accounts':[{'id':'a','label':'A','fingerprint':'a'}],'activeFingerprint':'a'},self.now-4000)
+  m.observe(self.db,{'accounts':[{'id':'b','label':'B','fingerprint':'b'}],'activeFingerprint':'b'},self.now)
+  self.token(100,100);self.assertIsNone(self.db.execute('select account from events').fetchone()[0])
  def test_non_openai_provider_excluded(self):self.state['provider']='other';self.token(100,100);self.assertEqual(self.total(),0)
  def test_calendar_periods_and_different_account_keep_old_totals(self):
   m.observe(self.db,{'accounts':[{'id':'a','label':'A'}]},self.now)

@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Codex Account Manager",
     "shortDescription": "Your accounts, usage, resets, and safer switching.",
-    "longDescription": "A local account dashboard with normal ChatGPT sign-in, per-account usage and reset-credit checks, refreshed-session preservation, and validated switching that gracefully reopens the desktop app.",
+    "longDescription": "A local account dashboard with private ChatGPT sign-in, per-account usage and reset-credit checks, refreshed-session preservation, and validated switching that gracefully reopens the desktop app.",
     "developerName": "Local developer",
     "category": "Productivity",
     "capabilities": [

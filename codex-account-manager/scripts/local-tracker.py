@@ -50,8 +50,11 @@ def observe(db, data, now):
     old = db.execute("SELECT value FROM meta WHERE key='observation'").fetchone()
     if old:
         previous = json.loads(old[0])
-        # Never fill gaps while the tracker is stopped, or an ambiguous switch interval.
-        if current and current == previous.get('account') and 0 < now - previous['at'] <= 45:
+        # Never fill gaps across an observed account change: if the tracker was
+        # stopped while accounts were switched, the next observation differs and
+        # no interval is created. Slow scans (large session histories) simply
+        # create longer intervals for the same unchanged account.
+        if current and current == previous.get('account') and 0 < now - previous['at'] <= 3600:
             db.execute('INSERT INTO intervals VALUES (?,?,?)', (previous['at'], now, current))
     db.execute("INSERT OR REPLACE INTO meta VALUES ('observation',?)", (json.dumps({'at': now, 'account': current}),))
 
@@ -147,6 +150,9 @@ def scan(db, homes, budget):
     for key, at in db.execute('SELECT id,turn_at FROM events WHERE account IS NULL AND turn_at>=?', (started,)).fetchall():
         account = account_at(db, at)
         if account: db.execute('UPDATE events SET account=? WHERE id=?', (account, key))
+    db.commit()
+    # Keep the attribution index useful for the unassigned backfill above.
+    db.execute('CREATE INDEX IF NOT EXISTS event_backfill ON events(account,turn_at)')
     db.commit()
 
 def summary(db, now):
